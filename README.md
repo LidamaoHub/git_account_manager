@@ -82,8 +82,35 @@ GitHub Account Manager (GAM) 是一个命令行工具，用于管理多个 GitHu
    ```
    gam pull <远程名称> <分支名称>
    ```
+8. 创建新分支：
+   ```
+   gam branch create <新分支名>
+   ```
 
-8. 移除账户：
+9. 切换分支：
+   ```
+   gam branch switch <分支名>
+   ```
+
+10. 列出所有分支：
+    ```
+    gam branch list
+    ```
+
+11. 切换分支：
+   ```
+   gam checkout <分支名>
+   ```
+   创建并切换到新分支：
+   ```
+   gam checkout -b <新分支名>
+   ```
+   基于远程分支创建本地分支并切换：
+   ```
+   gam checkout -b <本地分支名> <远程名称>/<远程分支名>
+   ```
+
+12. 移除账户：
    ```
    gam remove <用户名>
    ```

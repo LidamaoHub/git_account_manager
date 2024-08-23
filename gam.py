@@ -12,15 +12,8 @@ import urllib.parse
 import pygit2
 import requests
 from urllib.parse import urlparse
+from functools import wraps
 
-
-import argparse
-import json
-import os
-import requests
-import pygit2
-from getpass import getpass
-from urllib.parse import urlparse
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -35,7 +28,6 @@ def get_github_user_info(token):
     response = requests.get('https://api.github.com/user', headers=headers)
     if response.status_code == 200:
         user_data = response.json()
-        print(user_data)
         return user_data.get('login'), user_data.get('email'), user_data.get('avatar_url')
     else:
         print(f"获取用户信息失败: {response.status_code}")
@@ -196,7 +188,7 @@ def github_api_request(method, url, token, data=None, params=None):
 def get_authenticate_user(name=None):
     
     active_account = name if name else get_active_account()
-    print(get_active_account())
+    print(f"当前操作用户:{active_account}",)
     if not active_account:
         print("No active account. Use 'gam global' to set an account.")
         return None
@@ -217,6 +209,16 @@ def git_operation(func):
             print("Authentication failed. Operation aborted.")
     return wrapper
 
+
+def in_git_repo(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        repo_root = find_git_repo(os.getcwd())
+        if not repo_root:
+            print("错误：当前目录不在 Git 仓库中")
+            return
+        return func(repo_root, *args, **kwargs)
+    return wrapper
 
 def git_clone(args):
     if args.user:
@@ -247,7 +249,6 @@ def git_clone(args):
 
     except pygit2.GitError as e:
         print(f"Error cloning repository: {e}")
-
 
 
 @git_operation
@@ -399,6 +400,92 @@ def git_add(args,user_info):
         print("没有文件被添加到暂存区")
 
 
+@git_operation
+def git_branch_create(args, user_info):
+    repo_root = find_git_repo(os.getcwd())
+    if not repo_root:
+        print("错误：当前目录不在 Git 仓库中")
+        return
+
+    repo = pygit2.Repository(repo_root)
+    branch_name = args.name
+
+    try:
+        repo.branches.create(branch_name, repo.head.peel())
+        print(f"分支 '{branch_name}' 创建成功")
+    except ValueError as e:
+        print(f"创建分支失败：{str(e)}")
+
+@git_operation
+def git_branch_switch(args, user_info):
+    repo_root = find_git_repo(os.getcwd())
+    if not repo_root:
+        print("错误：当前目录不在 Git 仓库中")
+        return
+
+    repo = pygit2.Repository(repo_root)
+    branch_name = args.name
+
+    try:
+        branch = repo.branches[branch_name]
+        repo.checkout(branch)
+        print(f"已切换到分支 '{branch_name}'")
+    except KeyError:
+        print(f"错误：分支 '{branch_name}' 不存在")
+
+@git_operation
+def git_branch_list(args, user_info):
+    repo_root = find_git_repo(os.getcwd())
+    if not repo_root:
+        print("错误：当前目录不在 Git 仓库中")
+        return
+
+    repo = pygit2.Repository(repo_root)
+    
+    print("本地分支列表：")
+    for branch in repo.branches.local:
+        if branch == repo.head.shorthand:
+            print(f"* {branch}")
+        else:
+            print(f"  {branch}")
+
+@git_operation
+@in_git_repo
+def git_checkout(repo_root, args, user_info):
+    repo = pygit2.Repository(repo_root)
+    if args.new_branch:
+        if '/' in args.branch:
+            # 处理 "gam checkout -b dev origin/dev" 的情况
+            local_branch, remote_branch = args.branch.split('/')
+            if local_branch in repo.branches:
+                print(f"错误：本地分支 '{local_branch}' 已存在")
+                return
+            try:
+                remote = repo.remotes[remote_branch.split('/')[0]]
+                remote.fetch()
+                remote_ref = repo.references[f'refs/remotes/{remote_branch}']
+                repo.branches.create(local_branch, remote_ref.peel())
+                repo.checkout(f'refs/heads/{local_branch}')
+                print(f"已创建并切换到分支 '{local_branch}'，基于远程分支 '{remote_branch}'")
+            except (KeyError, ValueError) as e:
+                print(f"创建分支失败：{str(e)}")
+        else:
+            # 处理 "gam checkout -b xxx" 的情况
+            try:
+                branch = repo.branches.create(args.branch, repo.head.peel())
+                repo.checkout(branch)
+                print(f"已创建并切换到新分支 '{args.branch}'")
+            except ValueError as e:
+                print(f"创建分支失败：{str(e)}")
+    else:
+        # 处理 "gam checkout xxx" 的情况
+        try:
+            branch = repo.branches[args.branch]
+            repo.checkout(branch)
+            print(f"已切换到分支 '{args.branch}'")
+        except KeyError:
+            print(f"错误：分支 '{args.branch}' 不存在")
+
 
 def main():
     parser = argparse.ArgumentParser(description="GitHub Account Manager (gam)")
@@ -456,6 +543,32 @@ def main():
     pull_parser.add_argument('origin', help='remote name')
     pull_parser.add_argument('branch', help='branch name')
     pull_parser.set_defaults(func=git_pull)
+
+    # Branch operations
+    branch_parser = subparsers.add_parser('branch', help='Branch operations')
+    branch_subparsers = branch_parser.add_subparsers(dest='branch_command')
+
+    # Create branch
+    create_parser = branch_subparsers.add_parser('create', help='Create a new branch')
+    create_parser.add_argument('name', help='Name of the new branch')
+    create_parser.set_defaults(func=git_branch_create)
+
+    # Switch branch
+    switch_parser = branch_subparsers.add_parser('switch', help='Switch to a branch')
+    switch_parser.add_argument('name', help='Name of the branch to switch to')
+    switch_parser.set_defaults(func=git_branch_switch)
+
+    # List branches
+    list_parser = branch_subparsers.add_parser('list', help='List all branches')
+    list_parser.set_defaults(func=git_branch_list)
+
+    # Checkout
+    checkout_parser = subparsers.add_parser('checkout', help='Switch branches or restore working tree files')
+    checkout_parser.add_argument('branch', help='Branch to checkout or create')
+    checkout_parser.add_argument('-b', '--new-branch', action='store_true', help='Create a new branch')
+    checkout_parser.set_defaults(func=git_checkout)
+
+
 
     args = parser.parse_args()
     
