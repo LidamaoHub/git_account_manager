@@ -343,14 +343,13 @@ def git_commit(args,user_info):
     print(f"已提交: {message}")
 
 @git_operation
-def git_add(args):
+def git_add(args,user_info):
     repo_path = find_git_repo(os.getcwd())
     if not repo_path:
         print("错误：当前目录不在 Git 仓库中")
         return
 
     repo = pygit2.Repository(repo_path)
-    current_dir = os.getcwd()
 
     
     paths = args.file
